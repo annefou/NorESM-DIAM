@@ -2,8 +2,8 @@
 
 Coupling NorESM with DIAM macro-economic model
 
-- Scripts for converting DIAM outputs to NorESM inputs
-- Scripts for converting NorESM outputs to DIAM inputs
+- Scripts for converting DIAM outputs to NorESM inputs (make_lbc_file.py)
+- Scripts for converting NorESM outputs to DIAM inputs (calculate_*)
 
 
 Inputs for workflow:
