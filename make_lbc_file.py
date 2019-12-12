@@ -8,7 +8,7 @@
 #-----------------------------------------------------------------------
 
 # Modules needed:
-import Nio
+from netCDF4 import Dataset
 import numpy as np
 from pathlib import Path
 import shutil
@@ -26,15 +26,12 @@ file = Path(filename)
 if file.exists():
 	file.unlink()
 
-shutil.copy(filename_original, filename)
-
-# Create new and open new file for writing:
-file_lbc = Nio.open_file(filename, 'w')
+shutil.copyfile(filename_original, filename)
 
 #------------------------------------------------------------------------
 
 # Read in original variables:
-original_file 		= Nio.open_file(filename_original, 'r')
+original_file 		= Dataset(filename_original, 'r')
 original_time 		= original_file.variables['time'][246:]			# 1996 = 246
 original_date 		= original_file.variables['date'][246:]			# 1996 = 246
 original_time_bnds 	= original_file.variables['time_bnds'][246:,:]	# 1996 = 246
@@ -95,6 +92,8 @@ if len(new_time) != years:
 elif new_time_bnds.shape[0] != years:
 	sys.exit("Length of time bounds array is different from number of years specified.")
 
+# Open new file for writing:
+file_lbc = Dataset(filename, 'r+')
 
 # Fill time and date variable with values:
 file_lbc.variables['time'][:] 		= new_time	
@@ -125,7 +124,7 @@ print(original_CFC11eq[0])
 print(original_CF2CL2[0])
 
 # Reopening files:
-file_lbc = Nio.open_file(filename, 'w')
+file_lbc = Dataset(filename, 'r+')
 
 # Repeat values of other variables than those for time and CO2:
 
