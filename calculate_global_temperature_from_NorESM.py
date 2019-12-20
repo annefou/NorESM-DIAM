@@ -6,97 +6,127 @@
 #---------------------------------------------------------------------
 
 # Modules needed:
-from netCDF4 import Dataset
+import xarray as xr
 import numpy as np
-import matplotlib.pyplot as plt
+import cftime
+from optparse import OptionParser
 from scipy.signal import savgol_filter
-
 #-----------------------------------------------------------------------
-
-# Specify NorESM-files:
-file_without = '/home/jennybj/uio/nird/noresm_cases/post/DIAM_short_test_without_i1/DIAM_short_test_without_i1.TREFHT.nc'
-file_pre_indust = 'N1850OCBDRDDMS_f19_tn14_250119.TREFHT.370_389.nc'
-gw_file  = '/home/jennybj/Documents/etterbehandling/filer/gw_f19_tn14.nc'	
-
-#-------------------------------------------------------------------------------
-
 def global_average(atm_file, var, gw_file):
 
-	# Read in latitude weights:
-	gw_file = Dataset(gw_file, 'r')
-	gw 	    = gw_file.variables['gw'][:]
-	gw_file.close()
+    # Read in latitude weights:
+    dset_gw = xr.open_dataset(gw_file)
 
-	# Read in variable to average:
-	file  = Dataset(atm_file, 'r')
-	variable  = file.variables[var][:]
-	lat = file.variables['lat'][:]
-	lon = file.variables['lon'][:]
+    # Read in variable to average:
+    dset_atm = xr.open_dataset(atm_file, decode_times=True, use_cftime=True)
 
-	# Calculate spatial average:
-	spatial_avg = np.average(variable, axis=2)
-	spatial_avg = np.average(variable, axis=1, weights=gw)
+    # Calculate spatial average:
+    spatial_avg = np.average(dset_atm[var], axis=2)
+    spatial_avg = np.average(dset_atm[var], axis=1, weights=dset_gw['gw'])
 
-	file.close()
+    dset_gw.close()
+    dset_atm.close()
+    
+    # Calculate annual average:
+    year_avg = []
+    for i in range(int(spatial_avg.shape[0]/12)):
+        year_avg.append(np.average(spatial_avg[i*12:(i+1)*12]))
 
-	# Calculate annual average:
-	year_avg = []
-	for i in range(int(spatial_avg.shape[0]/12)):
-		year_avg.append(np.average(spatial_avg[i*12:(i+1)*12]))
+    return year_avg
 
-	return year_avg
+def save_temperature(tempfile, values, interp):
+    # APPLY SAVITZKY-GOLAY FILTER TO SMOOTH DATA
+    if interp:    
+        smooth_temp = savgol_filter(values, window_length=19, 
+                            polyorder=1, mode='interp')
+
+        write_temperature(tempfile, smooth_temp)
+    else:
+        write_temperature(tempfile, values)
+        
+#----------------------------------------------------------------------
+def write_temperature(tempfile, values):
+    # Write NorESM temperature differences to file:
+    years = (np.arange(1, len(values) + 1))
+    file = open(tempfile, "w")
+    for index in range(len(values)-1):
+        file.write('%6i %14.8f \n' % (years[index], values[index]))
+    file.close()
 
 #----------------------------------------------------------------------
+def main():
+    # Get parameters
+    usage = """usage: %prog --input_without=file_without.nc --input_pre_indust=file_pre_indust.nc
+                            --weights=wg.nc --output=global_temperature.txt
+                            [--output_smooth=global_smoothed_temperature.txt]"""
+    
+    parser = OptionParser(usage=usage)
+    parser.add_option("-s", "--input_without", dest="file_without",
+                      help="first input file ", metavar="file_without" )
+    parser.add_option("-r", "--input_pre_indust", dest="file_pre_indust",
+                      help="second input file (pre-indust)", metavar="file_pre_indust" )
+    parser.add_option("--weights", dest="weights",
+                      help="netCDF file containing weight values", metavar="weights")
+    parser.add_option("--output", dest="output_file",
+                      help="Output netCDF filename", metavar="output_file")
+    parser.add_option("--output_smoothed", dest="output_smoothed_file",
+                      help="Output netCDF filename with smoothed values (optional)", metavar="output_file_smoothed")
 
+    (options, args) = parser.parse_args()
 
-# Calculate global, annual averages:
-yearly_avg_without    = global_average(atm_file=file_without, var='TREFHT', gw_file=gw_file)
-yearly_avg_pre_indust = global_average(atm_file=file_pre_indust, var='TREFHT', gw_file=gw_file)
+    if not options.file_without:
+        parser.error("First input file must be specified!")
+    else:
+        file_without = options.file_without
+    
+    if not options.file_pre_indust:
+        parser.error("Second input file (pre-industrial) must be specified!")
+    else:
+        file_pre_indust = options.file_pre_indust
+  
+    if not options.weights:
+        parser.error("Weights must be specified!")
+    else:
+        weights = options.weights
 
-print(np.asarray(yearly_avg_without) - 273.15)
-print(len(yearly_avg_without))
+    if not options.output_file:
+        output_file = "NorESM_global_temperature.txt"
+    else:
+        output_file = options.output_file
 
-# Calculate the pre-industrial temperature:
-pre_indust_avg = np.average(yearly_avg_pre_indust)
-print(pre_indust_avg - 273.15)
+    
+    if not options.output_smoothed_file:
+        interp = False
+    else:
+        interp = True
+        output_smoothed_file = options.output_smoothed_file
+        
+    # Calculate global, annual averages:
+    yearly_avg_without    = global_average(atm_file=file_without, var='TREFHT', gw_file=weights)
+    yearly_avg_pre_indust = global_average(atm_file=file_pre_indust, var='TREFHT', gw_file=weights)
 
-# Calculate change in globale temperatures:
-yearly_avg_without = yearly_avg_without - pre_indust_avg
+    print(np.asarray(yearly_avg_without) - 273.15)
 
-# Define the years:
-years_2000 = (np.arange(2000, 2000 + len(yearly_avg_without) + 1))
-years = (np.arange(1, len(yearly_avg_without) + 1))
+    # Calculate the pre-industrial temperature:
+    pre_indust_avg = np.average(yearly_avg_pre_indust)
+    print("PRE INDUST AVG")
+    print(pre_indust_avg - 273.15)
 
+    # Calculate change in global temperatures:
+    yearly_avg_without = yearly_avg_without - pre_indust_avg
+    print("change in global temperature: ", yearly_avg_without)
 
-#----------------------------------------------------------------------
+    #----------------------------------------------------------------------
 
-# Read NorESM temperature differences to file:
+    # Write NorESM temperature differences to file:
+    save_temperature(output_file, yearly_avg_without, False)
 
-file = open("NorESM_global_temperature.txt", "w")
-for index in range(len(yearly_avg_without)-1):
-    file.write('%6i %14.8f \n' % (years[index], yearly_avg_without[index]))
-file.close()
+    #-------------------------------------------------------------------
+    if interp:
+    # APPLY SAVITZKY-GOLAY FILTER TO SMOOTH DATA
+        save_temperature(output_smoothed_file, yearly_avg_without, interp)
 
+    #-------------------------------------------------------------------
 
-#-------------------------------------------------------------------
-
-# APPLY SAVITZKY-GOLAY FILTER TO SMOOTH DATA
-
-smooth_temp = savgol_filter(yearly_avg_without, window_length=21, 
-							polyorder=1, mode='interp')
-
-#plt.plot(yearly_avg_without)
-#plt.plot(smooth_temp)
-#plt.show()
-
-
-#----------------------------------------------------------------------
-
-# Read NorESM smoothed temperature differences to file:
-
-file = open("NorESM_smoothed_global_temperature.txt", "w")
-for index in range(len(smooth_temp)-1):
-    file.write('%6i %14.8f \n' % (years[index], smooth_temp[index]))
-file.close()
-
-#-------------------------------------------------------------------
+if __name__ == "__main__":
+    main()
