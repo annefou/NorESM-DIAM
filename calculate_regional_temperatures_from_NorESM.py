@@ -5,142 +5,149 @@
 
 # Modules needed:
 from netCDF4 import Dataset
+import xarray as xr
 import numpy as np
 from scipy import interpolate
 from scipy.signal import savgol_filter
+from optparse import OptionParser
+from datetime import timedelta
+import pandas as pd
 
 #-----------------------------------------------------------------------
 
-# Specify file to calculate from:
-file = '/home/jennybj/uio/nird/noresm_cases/post/DIAM_short_test_without_i1/DIAM_short_test_without_i1.TREFHT.nc'
-gw_file = '/home/jennybj/Documents/etterbehandling/filer/gw_f19_tn14.nc'
-
-#-----------------------------------------------------------------------
-
-# Read in latitude weights:
-ncfile = Dataset(gw_file, 'r')
-gw = ncfile.variables['gw'][:]
-ncfile.close()
-
-#-----------------------------------------------------------------------
-
-# Read NorESM data:
-ncfile = Dataset(file, 'r')
-
-noresm_temp = ncfile.variables['TREFHT'][:]
-noresm_lat = ncfile.variables['lat'][:]  # -90 to 90
-noresm_lon = ncfile.variables['lon'][:]  # 0 to 360
-
-ncfile.close()
-
-#-----------------------------------------------------------------------
-
-# Calculate yearly average:
-
-years = int(noresm_temp.shape[0]/12)
-avg_temp = np.zeros((years, len(noresm_lat), len(noresm_lon)))
-
-for year in range(years):
-    avg_temp[year, :, :] = np.average(noresm_temp[year*12:(year + 1)*12,:,:], axis=0)
-
-#-----------------------------------------------------------------------
-
-# Stagger NorESM grid to match DIAM:
-stag_lat = (noresm_lat[1] - noresm_lat[0]) / 2
-stag_lon = (noresm_lon[1] - noresm_lon[0]) / 2
-
-stag_noresm_lat = noresm_lat - stag_lat
-stag_noresm_lon = noresm_lon - stag_lon
-
-# Create lat and lon with spacing that fits with the DIAM data (1x1):
-interp_lon = np.arange(0., 360., 1)  # DIAM has lon -180 to 179
-interp_lat = np.arange(-90., 90., 1)
-
-#-----------------------------------------------------------------------
-
-# Define numbers for final grid:
-T = avg_temp.shape[0]    # number of timesteps
-X = interp_lon.shape[0]  # number of longitudes
-Y = interp_lat.shape[0]  # number of latitudes
-
-interp_temp = np.zeros((T, Y, X))
-
-# Interpolate data to 1x1:
-for i in range(T):
-    f = interpolate.interp2d(stag_noresm_lon,
-                             stag_noresm_lat,
-                             avg_temp[i,:,:],
-                             kind='linear')
-    interp_temp[i,:,:] = f(interp_lon, interp_lat) - 273.15
-
-#-----------------------------------------------------------------------
-
-# Read coordinates from DIAM:
-
-filename = '/home/jennybj/Documents/etterbehandling/spesifikt/DIAM/data/parse2.gin'
-
-# Read lines from file:
-with open(filename, 'r') as myfile:
-    lines = myfile.readlines()
-
-rows = len(lines)
-columns = len(lines[0].split()) - 2
-
-# Array of all corrdinates from DIAM:
-diam_lat = np.zeros(rows)
-diam_lon = np.zeros(rows)
-
-# Add coordinates:
-for i in range(rows):
-
-    line = lines[i].split()
-    index = line.index('"')
+def main():
+        # Get parameters
+    usage = """usage: %prog --input=file.nc --diam=diam.gin
+                            --output=NorESM_spatial_temperature.txt
+                            [--output_smooth=NorESM_smoothed_spatial_temperature.txt]"""
     
-    lat = float(line[index+1])
-    lon = float(line[index+2])
+    parser = OptionParser(usage=usage)
+    parser.add_option("-i", "--input", dest="file",
+                      help="netCDF input file ", metavar="file" )
+    parser.add_option("-d", "--diam", dest="filename",
+                      help="DIAM input file (txt)", metavar="filename" )
+    parser.add_option("--output", dest="file_spatial",
+                      help="Output txt filename", metavar="file_spatial")
+    parser.add_option("--output_smoothed", dest="file_smoothed_spatial",
+                      help="Output txt filename with smoothed values (optional)", metavar="file_smoothed_spatial")
 
-    diam_lat[i] = lat
-    diam_lon[i] = lon
+    (options, args) = parser.parse_args()
 
+    if not options.file:
+        parser.error("First input file must be specified!")
+    else:
+        file = options.file
+    
+    if not options.filename:
+        parser.error("DIAM input must be specified!")
+    else:
+        filename = options.filename
 
-#-----------------------------------------------------------------------
+    if not options.file_spatial:
+        file_spatial = "NorESM_spatial_temperature.txt"
+    else:
+        file_spatial = options.file_spatial
 
-# Shift coordinates to match DAIM:
-final_interp_temp = np.zeros(interp_temp.shape)
-final_interp_temp[:, :, 0:180] = interp_temp[:, :, 180:]
-final_interp_temp[:, :, 180:] = interp_temp[:, :, 0:180]
+    if not options.file_smoothed_spatial:
+        smooth = False
+    else:
+        smooth = True
+        file_smoothed_spatial = options.file_smoothed_spatial
+        
+    # Read NorESM data:
+    
+    dset_atm = xr.open_dataset(file, decode_times=True, use_cftime=True)
+    
+    # align times (times are apparently wrong e.g. we need to retrieve one day to each date)
+    time1 = dset_atm.time.copy()
+    for itime in range(time1.sizes['time']):
+        bb = dset_atm.time.values[itime].timetuple()
+        time1.values[itime] = dset_atm.time.values[itime] - timedelta(days=1)
+    dset_atm = dset_atm.assign_coords({'time':time1})
 
-# Write NorESM temperature to file:
+    # Compute yearly average
+    avg_temp = dset_atm.groupby('time.year').mean('time')
+    
+    # Stagger NorESM grid to match DIAM:
+    stag_lat = (dset_atm.lat[1] - dset_atm.lat[0]) / 2
+    stag_lon = (dset_atm.lon[1] - dset_atm.lon[0]) / 2
 
-interp_lon = interp_lon - 180
+    stag_noresm_lat = dset_atm.lat - stag_lat
+    stag_noresm_lon = dset_atm.lon - stag_lon 
 
-# Open file for writing:
-file1 = open('NorESM_spatial_temperature.txt', 'w')
-file2 = open('NorESM_smoothed_spatial_temperature.txt', 'w')
+    # Create lat and lon with spacing that fits with the DIAM data (1x1):
+    interp_lon = np.arange(0., 360., 1)  # DIAM has lon -180 to 179
+    interp_lat = np.arange(-90., 90., 1)
 
-for lat, lon in zip(diam_lat, diam_lon):
+    #-----------------------------------------------------------------------
 
-    index_lat = np.where(interp_lat == lat)[0]
-    index_lon = np.where(interp_lon == lon)[0]
+    # Define numbers for final grid:
+    T = avg_temp.TREFHT.shape[0]    # number of timesteps
+    X = interp_lon.shape[0]  # number of longitudes
+    Y = interp_lat.shape[0]  # number of latitudes
 
-    a = final_interp_temp[:, index_lat, index_lon]
-    temp = np.reshape(a, T)  # from (100,1) to (100)
+    interp_temp = np.zeros((T, Y, X))
 
-    file1.writelines(['%6.i' % item for item in [lat, lon]])
-    file1.writelines(['%15.8f' % item for item in temp])
-    file1.write('\n')
+    # Interpolate data to 1x1:
+    for i in range(T):
+        f = interpolate.interp2d(stag_noresm_lon,
+                             stag_noresm_lat,
+                             avg_temp.TREFHT[i,:,:],
+                             kind='linear')
+        interp_temp[i,:,:] = f(interp_lon, interp_lat) - 273.15
 
-    # Smooth the data:
-    smooth_temp = savgol_filter(temp, window_length=21, 
+    #-----------------------------------------------------------------------
+
+    # Read coordinates from DIAM:
+    data = pd.read_csv(filename, header=None, sep="\s+")
+    
+    diam_lat = data[2]
+    diam_lon = data[3]
+
+    #-----------------------------------------------------------------------
+
+    # Shift coordinates to match DAIM:
+    final_interp_temp = np.zeros(interp_temp.shape)
+    final_interp_temp[:, :, 0:180] = interp_temp[:, :, 180:]
+    final_interp_temp[:, :, 180:] = interp_temp[:, :, 0:180]
+
+    # Write NorESM temperature to file:
+
+    interp_lon = interp_lon - 180
+
+    # Open file for writing:
+    file1 = open(file_spatial, 'w')
+    if smooth:
+        file2 = open(file_smoothed_spatial, 'w')
+
+    for lat, lon in zip(diam_lat, diam_lon):
+
+        index_lat = np.where(interp_lat == lat)[0]
+        index_lon = np.where(interp_lon == lon)[0]
+
+        a = final_interp_temp[:, index_lat, index_lon]
+        temp = np.reshape(a, T)  # from (100,1) to (100)
+
+        file1.writelines(['%6.i' % item for item in [lat, lon]])
+        file1.writelines(['%15.8f' % item for item in temp])
+        file1.write('\n')
+
+        if smooth:
+            # Smooth the data:
+            smooth_temp = savgol_filter(temp, window_length=19, 
                                 polyorder=1, mode='interp')
 
-    file2.writelines(['%6.i' % item for item in [lat, lon]])
-    file2.writelines(['%15.8f' % item for item in smooth_temp])
-    file2.write('\n')
+            file2.writelines(['%6.i' % item for item in [lat, lon]])
+            file2.writelines(['%15.8f' % item for item in smooth_temp])
+            file2.write('\n')
 
-file1.close()
-file2.close()
+    file1.close()
+    if smooth:
+        file2.close()
 
 
 #-----------------------------------------------------------------------
 
+if __name__ == "__main__":
+    main()
+    
