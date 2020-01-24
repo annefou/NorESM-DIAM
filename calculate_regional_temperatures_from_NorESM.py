@@ -134,7 +134,8 @@ def main():
 
         if smooth:
             # Smooth the data:
-            smooth_temp = savgol_filter(temp, window_length=19, 
+            wl = int(len(temp)/2)*2-1
+            smooth_temp = savgol_filter(temp, window_length=wl, 
                                 polyorder=1, mode='interp')
 
             file2.writelines(['%6.i' % item for item in [lat, lon]])

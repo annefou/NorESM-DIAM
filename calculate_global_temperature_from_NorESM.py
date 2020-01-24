@@ -37,7 +37,9 @@ def global_average(atm_file, var, gw_file):
 def save_temperature(tempfile, values, interp):
     # APPLY SAVITZKY-GOLAY FILTER TO SMOOTH DATA
     if interp:    
-        smooth_temp = savgol_filter(values, window_length=19, 
+        wl = int(len(values)/2)*2-1
+        print("wl = ", wl)
+        smooth_temp = savgol_filter(values, window_length=wl, 
                             polyorder=1, mode='interp')
 
         write_temperature(tempfile, smooth_temp)
