@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Create couple4.nor
 # Calculate the global average temperature change from pre-industrial
 # for the years between 2000 and 2099.

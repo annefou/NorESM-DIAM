@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python
 # Make a LBC file with constant values for other components than CO2
 
 # 1996 in model corresponds to 1990 in DIAM data...

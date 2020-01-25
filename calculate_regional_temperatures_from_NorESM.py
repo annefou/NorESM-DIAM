@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Create couple4.regt
 # Interpolate and filter NorESM regional temperature data to DIAM grid.
 
